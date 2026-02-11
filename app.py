@@ -5,7 +5,7 @@ import openjij as oj
 
 st.set_page_config(layout="wide", page_title="AIシフト作成アプリ")
 
-st.title('📅 AIシフト作成アプリ (平日ほぼ全員出勤版)')
+st.title('📅 AIシフト作成アプリ (平日ほぼ全員出勤・完成版)')
 
 # --- 1. 基本設定 ---
 staff_members = ['中村', '長坂', '角谷', '小森', '宮内', '仲村']
@@ -51,9 +51,9 @@ if st.button('この条件でシフトを自動生成する'):
     qubo = {}
     # 重みの設定
     A = 4000  # 出勤日数を守る (超最強)
-    B = 2000  # 希望休 (Aより強くすることで、出勤日数を守りつつも休みを優先させる)
+    B = 2500  # 希望休 (Aとバランスを取って休みを優先)
     C = 100   # 人数制約
-    E = 10    # 連勤抑制 (今回は出勤を詰めたいので弱めに設定)
+    E = 10    # 連勤抑制
 
     for i, name in enumerate(staff_members):
         target = targets[name]
@@ -67,7 +67,6 @@ if st.button('この条件でシフトを自動生成する'):
         # 【休み・出勤必須】
         for d in range(num_days):
             if off_df.iloc[i, d]:
-                # 希望休はBの重みで「出勤すること」に大きな罰金
                 qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) + B
             if must_df.iloc[i, d]:
                 qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) - B
