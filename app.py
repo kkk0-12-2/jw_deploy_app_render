@@ -18,7 +18,7 @@ wd_list = ['月', '火', '水', '木', '金', '土', '日']
 start_idx = wd_list.index(start_wd)
 
 simple_columns = [f"{d+1}" for d in range(num_days)]
-st.info(f"【最終調整】出勤日数を厳密に守るように最適化しました。")
+st.info(f"【最終調整】出勤日数を厳密に守り、土日は1人勤務になるように最適化しました。")
 
 # --- 3. 出勤日数の個別指定 ---
 st.sidebar.header('👤 スタッフ別・目標出勤日数')
@@ -80,18 +80,22 @@ if st.button('この条件でシフトを自動生成する'):
     # 【1日の人数バランス】
     for d in range(num_days):
         current_wd = wd_list[(start_idx + d) % 7]
+        
         if current_wd in ['土', '日']:
             daily_target = 1
+            weight = 50.0  # 土日は強く1人を守る
         elif current_wd == '火':
             daily_target = num_staff
+            weight = C
         else:
             daily_target = 5
+            weight = C
         
         # (Σx - daily_target)² を正しく展開
         for i in range(num_staff):
-            qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) + C * (1 - 2 * daily_target)
+            qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) + weight * (1 - 2 * daily_target)
             for i2 in range(i + 1, num_staff):
-                qubo[(i, d), (i2, d)] = qubo.get(((i, d), (i2, d)), 0) + C * 2
+                qubo[(i, d), (i2, d)] = qubo.get(((i, d), (i2, d)), 0) + weight * 2
     
     # 計算
     sampler = oj.SASampler()
