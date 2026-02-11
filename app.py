@@ -4,7 +4,7 @@ import pandas as pd
 import openjij as oj
 
 st.set_page_config(layout="wide", page_title="AIシフト作成アプリ")
-st.title('📅 AIシフト作成アプリ (超・出勤日数重視版)')
+st.title('📅 AIシフト作成アプリ')
 
 # --- 1. 基本設定 ---
 staff_members = ['中村', '長坂', '角谷', '小森', '宮内', '仲村']
@@ -36,11 +36,11 @@ if 'must_work_df' not in st.session_state or st.session_state.must_work_df.shape
     st.session_state.must_work_df = pd.DataFrame(False, index=staff_members, columns=simple_columns)
 
 with col_in1:
-    st.subheader('❌ 希望休 (休み指示)')
+    st.subheader('❌ 希望休 ')
     off_df = st.data_editor(st.session_state.off_req_df, key="off_editor")
 
 with col_in2:
-    st.subheader('✅ 出勤必須 (必ず出る)')
+    st.subheader('✅ 出勤必須 ')
     must_df = st.data_editor(st.session_state.must_work_df, key="must_editor")
 
 # --- 5. 計算ロジック ---
