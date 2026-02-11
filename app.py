@@ -4,7 +4,6 @@ import pandas as pd
 import openjij as oj
 
 st.set_page_config(layout="wide", page_title="AIシフト作成アプリ")
-
 st.title('📅 AIシフト作成アプリ (超・出勤日数重視版)')
 
 # --- 1. 基本設定 ---
@@ -18,9 +17,8 @@ start_wd = st.sidebar.selectbox('今月の1日は何曜日？', ['月', '火', '
 wd_list = ['月', '火', '水', '木', '金', '土', '日']
 start_idx = wd_list.index(start_wd)
 
-# 入力表用
 simple_columns = [f"{d+1}" for d in range(num_days)]
-st.info(f"【最終調整】日数を埋める力を最大化しました。火曜全員・平日多め・土日1人をベースに、指定日数を死守します。")
+st.info(f"【最終調整】出勤日数を厳密に守るように最適化しました。")
 
 # --- 3. 出勤日数の個別指定 ---
 st.sidebar.header('👤 スタッフ別・目標出勤日数')
@@ -50,19 +48,27 @@ if st.button('この条件でシフトを自動生成する'):
     progress_bar = st.progress(0)
     
     qubo = {}
-    # 重みのバランスを極端に変更
-    A = 10000 # 指定日数を守る力を「超最強」に。11日なんて言わせません。
-    B = 5000  # 希望休。日数よりも休みを優先（休みを入れたら日数は減る設定）
-    C = 1     # 1日の人数。ここを極限まで弱くし、AIが「人数が揃ったから終わり」とするのを防ぎます。
-
+    
+    # 重みの設定
+    A = 100.0   # 指定日数制約（強く）
+    B = 50.0    # 希望休・出勤必須
+    C = 0.1     # 1日の人数バランス（弱く）
+    
     for i, name in enumerate(staff_members):
         target = targets[name]
-        # 【勤務日数制約】 (Σx - target)^2 を徹底的に守らせる
-        for d1 in range(num_days):
-            qubo[(i, d1), (i, d1)] = qubo.get(((i, d1), (i, d1)), 0) + A * (1 - 2 * target)
-            for d2 in range(num_days):
-                if d1 != d2:
-                    qubo[(i, d1), (i, d2)] = qubo.get(((i, d1), (i, d2)), 0) + A * 2
+        
+        # 【出勤日数制約】 (Σx - target)² を正しく展開
+        # Σx² - 2*target*Σx + target²
+        # target²は定数なので無視
+        for d in range(num_days):
+            # x_d² の係数: A * 1
+            qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) + A
+            # -2*target*x_d の係数: A * (-2*target)
+            qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) + A * (-2 * target)
+            
+            # x_d1 * x_d2 の係数: A * 2
+            for d2 in range(d + 1, num_days):
+                qubo[(i, d), (i, d2)] = qubo.get(((i, d), (i, d2)), 0) + A * 2
         
         # 【休み・出勤必須】
         for d in range(num_days):
@@ -70,8 +76,8 @@ if st.button('この条件でシフトを自動生成する'):
                 qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) + B
             if must_df.iloc[i, d]:
                 qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) - B
-
-    # 【1日の人数バランス】あえて緩い「努力目標」に変えます
+    
+    # 【1日の人数バランス】
     for d in range(num_days):
         current_wd = wd_list[(start_idx + d) % 7]
         if current_wd in ['土', '日']:
@@ -80,19 +86,20 @@ if st.button('この条件でシフトを自動生成する'):
             daily_target = num_staff
         else:
             daily_target = 5
-            
-        for i1 in range(num_staff):
-            qubo[(i1, d), (i1, d)] = qubo.get(((i1, d), (i1, d)), 0) + C * (1 - 2 * daily_target)
-            for i2 in range(num_staff):
-                if i1 != i2:
-                    qubo[(i1, d), (i2, d)] = qubo.get(((i1, d), (i2, d)), 0) + C * 2
-
-    # 計算（さらに粘り強く）
+        
+        # (Σx - daily_target)² を正しく展開
+        for i in range(num_staff):
+            qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) + C * (1 - 2 * daily_target)
+            for i2 in range(i + 1, num_staff):
+                qubo[(i, d), (i2, d)] = qubo.get(((i, d), (i2, d)), 0) + C * 2
+    
+    # 計算
     sampler = oj.SASampler()
-    response = sampler.sample_qubo(qubo, num_reads=200) # 200回試行に増強
+    response = sampler.sample_qubo(qubo, num_reads=300, num_sweeps=10000)
     sample = response.first.sample
+    
     progress_bar.progress(100)
-
+    
     # 結果表示
     column_with_wd = [f"{d+1}({wd_list[(start_idx + d) % 7]})" for d in range(num_days)]
     res_matrix = np.zeros((num_staff, num_days), dtype=str)
@@ -108,7 +115,14 @@ if st.button('この条件でシフトを自動生成する'):
     with c1:
         st.write('■ スタッフ別出勤日数')
         counts = {n: np.sum(res_matrix[i] == '◯') for i, n in enumerate(staff_members)}
-        st.write(pd.Series(counts))
+        count_series = pd.Series(counts)
+        st.write(count_series)
+        
+        # 目標との差を表示
+        st.write('■ 目標との差')
+        diff = {n: counts[n] - targets[n] for n in staff_members}
+        st.write(pd.Series(diff))
+    
     with c2:
         st.write('■ 日別出勤人数')
         d_counts = [np.sum(res_matrix[:, d] == '◯') for d in range(num_days)]
