@@ -1,124 +1,71 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
 import openjij as oj
 
-#テキスト表示
-st.title('都市を選択して巡回セールスマン問題を実施')
-st.write('巡回する都市を選択してOpenJijで最適なルートを計算')
+st.title('AIシフト作成アプリ (プロトタイプ)')
+st.write('7人のスタッフの1週間分のシフトを自動生成します。')
 
-#サイドバー設定
-with st.sidebar:
-    st.write('計算のパラメーター設定')
-    time_calc = st.number_input('タイムアウト時間',max_value = 10000, value = 1000, step = 1000)
+# --- 設定 ---
+staff_members = ['Aさん', 'Bさん', 'Cさん', 'Dさん', 'Eさん', 'Fさん', 'Gさん']
+days = ['月', '火', '水', '木', '金', '土', '日']
+num_staff = len(staff_members)
+num_days = len(days)
 
-#都市を設定
-cities = {
-    'A': [23, 56], 'B': [12, 24], 'C': [36, 72], 'D': [9, 53], 'E': [61, 55],
-    'F': [47, 19], 'G': [33, 68]}
+# --- 入力 UI ---
+st.sidebar.header('個別設定')
+four_day_staff = st.sidebar.selectbox('週4勤務の人は？', staff_members)
 
-cities_list = list(cities.keys())
+st.header('希望休の入力')
+st.write('休みを希望する日にチェックを入れてください。')
 
-col1, col2 = st.columns(2) #横並びレイアウトを作成
+# 希望休を保持する行列 (行=人, 列=日)
+off_requests = np.zeros((num_staff, num_days))
+cols = st.columns(num_days)
+for j, day in enumerate(days):
+    with cols[j]:
+        st.write(day)
+        for i, name in enumerate(staff_members):
+            if st.checkbox(f'{name}', key=f'{i}-{j}'):
+                off_requests[i, j] = 1
 
-with col1:
-    #都市を選択
-    selected_cities = st.multiselect('都市を選択',cities_list,default = cities_list)
-with col2:
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    if selected_cities:  # 都市が選択されている場合
-        #選択した都市の座標をndarrayにする
-        selected_coords = np.array([cities[pref] for pref in selected_cities])
-        N = selected_coords.shape[0]  # 都市数
-
-        # 都市の座標をグラフで表示
-        plt.figure(figsize=(7, 7))
-        plt.plot(selected_coords[:, 0], selected_coords[:, 1], 'o')
-        st.pyplot(plt)
-    else:  # 都市が選択されていない場合
-        selected_coords = np.array([])  # 空のndarrayをセット
-        N = 0
-
-        # 空のグラフを表示
-        plt.figure(figsize=(7, 7))
-        plt.title('No selected')
-        st.pyplot(plt)
-
-button1 = st.button('SQAを実行') #ボタンを作成
-if button1:
-    # 都市間の距離行列を作成
-    x = selected_coords[:, 0]
-    y = selected_coords[:, 1]
-    d = np.sqrt((x[:, np.newaxis] - x[np.newaxis, :]) ** 2 +(y[:, np.newaxis] - y[np.newaxis, :]) ** 2)
-
-    # 定式化
-    def tsp_qubo(distance, A, B):
-        n = len(distance)
-        qubo = {}
+# --- 計算ロジック (QUBO) ---
+if st.button('シフトを自動生成する'):
+    # QUBOの作成
+    qubo = {}
     
-        # コスト項 (巡回路の距離)
-        for i in range(n):
-            for j in range(n):
-                if i == j:
-                    continue
-                for t in range(n):
-                    qubo[(i, t), (j, (t+1) % n)] = distance[i, j]
+    # 制約の重み
+    A = 50  # 勤務日数の制約
+    B = 100 # 希望休の制約
     
-        # 罰則項
-        for i in range(n):
-            for t in range(n):
-                for k in range(t+1, n):
-                    qubo[(i, t), (i, k)] = 2*A  # 同じ都市が複数回選ばれるのを防ぐ
-    
-                for j in range(i+1, n):
-                    qubo[(i, t), (j, t)] = 2*B  # 1つの時刻に複数の都市が選ばれるのを防ぐ
-    
-                qubo[(i, t), (i, t)] = - A - B  # 自己制約を適用
-    
-        constant = n*(A + B)
-        return qubo, constant
-    
-    # 重みの設定
-    A = np.max(d) * 1.5
-    B = np.max(d) * 1.5
-    qubo, constant = tsp_qubo(d, A, B)
+    for i, name in enumerate(staff_members):
+        # 目標勤務日数
+        target = 4 if name == four_day_staff else 5
+        
+        # 1. 勤務日数制約: (Σx_ij - target)^2
+        for j1 in range(num_days):
+            qubo[(i, j1), (i, j1)] = qubo.get(((i, j1), (i, j1)), 0) + A * (1 - 2 * target)
+            for j2 in range(num_days):
+                if j1 != j2:
+                    qubo[(i, j1), (i, j2)] = qubo.get(((i, j1), (i, j2)), 0) + A * 2
+        
+        # 2. 希望休制約: 希望休の日に働くと罰則
+        for j in range(num_days):
+            if off_requests[i, j] == 1:
+                qubo[(i, j), (i, j)] = qubo.get(((i, j), (i, j)), 0) + B
 
-    # OpenJijのサンプラーで解く
+    # OpenJij で計算
     sampler = oj.SASampler()
     response = sampler.sample_qubo(qubo, num_reads=10)
-
-    # 結果を表示
-    def tsp_decode_sample(sample, n):
-        """サンプルから巡回路を復元"""
-        ones = [k for k, v in sample.items() if v == 1]
+    sample = response.first.sample
     
-        # 取得された経路を行列化
-        x_value = np.zeros((n, n), dtype=int)
-        for i, t in ones:
-            x_value[i, t] = 1
+    # 結果の整形
+    result_matrix = np.zeros((num_staff, num_days), dtype=str)
+    for (i, j), val in sample.items():
+        result_matrix[i, j] = '◯' if val == 1 else '×'
     
-        # 制約違反をチェック
-        condition_A = np.sum((np.sum(x_value, axis=1) - 1)**2)
-        condition_B = np.sum((np.sum(x_value, axis=0) - 1)**2)
-    
-        # 経路を復元
-        tour = np.zeros(n, dtype=int)
-        for t in range(n):
-            tour[t] = np.where(x_value[:, t] == 1)[0][0]
-    
-        return x_value, tour, {"condition_A": condition_A, "condition_B": condition_B}
-    
-    # 最適解をデコード
-    sample = response.first.sample  # 最もエネルギーの低い解
-    x_value, tour, violation = tsp_decode_sample(sample, N)
-    total_distance = sum(d[tour[i]][tour[(i+1)%N]] for i in range(N))
-    st.write(f'総距離:{total_distance}')
-    
-    # 巡回路の可視化
-    plt.figure(figsize=(7, 7))
-    plt.plot(x, y, "o")
-    plt.plot(x[tour], y[tour], "-")
-    plt.plot(x[[tour[-1], tour[0]]], y[[tour[-1], tour[0]]], "-")
-    st.pyplot(plt)
+    # 表として表示
+    df = pd.DataFrame(result_matrix, index=staff_members, columns=days)
+    st.header('生成されたシフト表')
+    st.table(df)
+    st.write('◯: 出勤, ×: 休み')
