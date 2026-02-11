@@ -2,4 +2,4 @@ streamlit
 openjij==0.11.3
 pyqubo
 numpy
-matplotlib
+pandas
