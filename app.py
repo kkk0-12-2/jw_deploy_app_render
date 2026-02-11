@@ -5,7 +5,7 @@ import openjij as oj
 
 st.set_page_config(layout="wide", page_title="AIシフト作成アプリ")
 
-st.title('📅 AIシフト作成アプリ (平日ほぼ全員出勤・完成版)')
+st.title('📅 AIシフト作成アプリ (超・出勤日数重視版)')
 
 # --- 1. 基本設定 ---
 staff_members = ['中村', '長坂', '角谷', '小森', '宮内', '仲村']
@@ -18,8 +18,9 @@ start_wd = st.sidebar.selectbox('今月の1日は何曜日？', ['月', '火', '
 wd_list = ['月', '火', '水', '木', '金', '土', '日']
 start_idx = wd_list.index(start_wd)
 
+# 入力表用
 simple_columns = [f"{d+1}" for d in range(num_days)]
-st.info(f"設定確認：火曜は【全員】、他平日は【5人】、土日は【1人】を目標にします。※希望休は最優先されます。")
+st.info(f"【最終調整】日数を埋める力を最大化しました。火曜全員・平日多め・土日1人をベースに、指定日数を死守します。")
 
 # --- 3. 出勤日数の個別指定 ---
 st.sidebar.header('👤 スタッフ別・目標出勤日数')
@@ -37,7 +38,7 @@ if 'must_work_df' not in st.session_state or st.session_state.must_work_df.shape
     st.session_state.must_work_df = pd.DataFrame(False, index=staff_members, columns=simple_columns)
 
 with col_in1:
-    st.subheader('❌ 希望休 (休み)')
+    st.subheader('❌ 希望休 (休み指示)')
     off_df = st.data_editor(st.session_state.off_req_df, key="off_editor")
 
 with col_in2:
@@ -49,15 +50,14 @@ if st.button('この条件でシフトを自動生成する'):
     progress_bar = st.progress(0)
     
     qubo = {}
-    # 重みの設定
-    A = 4000  # 出勤日数を守る (超最強)
-    B = 2500  # 希望休 (Aとバランスを取って休みを優先)
-    C = 100   # 人数制約
-    E = 10    # 連勤抑制
+    # 重みのバランスを極端に変更
+    A = 10000 # 指定日数を守る力を「超最強」に。11日なんて言わせません。
+    B = 5000  # 希望休。日数よりも休みを優先（休みを入れたら日数は減る設定）
+    C = 1     # 1日の人数。ここを極限まで弱くし、AIが「人数が揃ったから終わり」とするのを防ぎます。
 
     for i, name in enumerate(staff_members):
         target = targets[name]
-        # 【勤務日数制約】
+        # 【勤務日数制約】 (Σx - target)^2 を徹底的に守らせる
         for d1 in range(num_days):
             qubo[(i, d1), (i, d1)] = qubo.get(((i, d1), (i, d1)), 0) + A * (1 - 2 * target)
             for d2 in range(num_days):
@@ -71,16 +71,15 @@ if st.button('この条件でシフトを自動生成する'):
             if must_df.iloc[i, d]:
                 qubo[(i, d), (i, d)] = qubo.get(((i, d), (i, d)), 0) - B
 
-    # 【1日の人数制約】
+    # 【1日の人数バランス】あえて緩い「努力目標」に変えます
     for d in range(num_days):
         current_wd = wd_list[(start_idx + d) % 7]
-        
         if current_wd in ['土', '日']:
-            daily_target = 1  # 土日は1人
+            daily_target = 1
         elif current_wd == '火':
-            daily_target = num_staff  # 火曜日は全員(6人)
+            daily_target = num_staff
         else:
-            daily_target = 5  # 他の平日は5人 (ほぼ全員)
+            daily_target = 5
             
         for i1 in range(num_staff):
             qubo[(i1, d), (i1, d)] = qubo.get(((i1, d), (i1, d)), 0) + C * (1 - 2 * daily_target)
@@ -88,9 +87,9 @@ if st.button('この条件でシフトを自動生成する'):
                 if i1 != i2:
                     qubo[(i1, d), (i2, d)] = qubo.get(((i1, d), (i2, d)), 0) + C * 2
 
-    # 計算
+    # 計算（さらに粘り強く）
     sampler = oj.SASampler()
-    response = sampler.sample_qubo(qubo, num_reads=150)
+    response = sampler.sample_qubo(qubo, num_reads=200) # 200回試行に増強
     sample = response.first.sample
     progress_bar.progress(100)
 
